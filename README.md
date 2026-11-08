@@ -15,7 +15,7 @@ Enables Resizable BAR (16 GiB Large BAR) for Intel Arc GPUs on older HP machines
 
 | System | Generation | GPU | Driver | OS |
 | --- | --- | --- | --- | --- |
-| HP Pavilion h8 | Sandy Bridge (2011) | Arc A770 16GB | i915 | Ubuntu 24.04 / kernel 6.8 |
+| HP Pavilion h8 | Sandy Bridge (2011) | Arc A770 16GB | i915 | Ubuntu 26.04 / kernel 6.8 (pinned, see caveats) |
 | HP Z230 | Haswell (2013) | Arc B580 12GB | xe | Ubuntu 26.04 / kernel 7.0 |
 | HP Z240 | Skylake (2015) | Arc B580 12GB | xe | Ubuntu 26.04 / kernel 7.0 |
 
@@ -275,8 +275,9 @@ Remove `pci=nocrs` from `/etc/default/grub` and run `sudo update-grub` to undo t
 ## Caveats and limitations
 
 - **`pci=nocrs` makes Linux ignore the firmware's resource description.** It can collide with reserved regions. Check once after installing, and again after any hardware change: `sudo dmesg | grep -iE 'BAR .*(failed|no space|conflict)|resource.*conflict'`
-- **`remove`/`rescan` runs on every boot.** The script always falls through to `modprobe`, so the worst case is booting with the old 256 MiB BAR.
+- **`remove`/`rescan` runs on every boot.** If the new size does not fit, the script puts the old size back, re-enumerates and only then loads the driver, so the worst case is booting with the old 256 MiB BAR. Do not skip that rollback: loading a driver onto an unassigned BAR made i915 dereference a NULL pointer and took the machine down.
 - **UEFI boot is required.** Arc cards have no legacy VBIOS.
+- **On a 36-bit CPU, kernel 7.0 cannot place a 16 GiB window.** Sandy Bridge and other 36-bit parts have only 64 GiB of physical address space. Kernel 7.0 aligns the whole bridge window to the BAR size, so 16 GiB of BAR plus the switch's own 8 MiB needs a 16 GiB-aligned slot with room to spare above it. With 32 GB of RAM the top of memory sits at \~33 GiB, which leaves 48 GiB as the only aligned slot, and 48 + 16 lands exactly on the 64 GiB ceiling, 8 MiB short. Kernel 6.8 placed the two separately and fitted. On such a machine, boot a 6.8 kernel, or drop to 24 GB of RAM so the 32 GiB slot opens up, or lower `SIZE_IDX`. The HP Pavilion h8 in the table above runs 26.04 with 6.8 pinned through `GRUB_DEFAULT` for this reason. Machines with 39-bit addressing — Haswell onward, including the Z230 and Z240 — are unaffected and run kernel 7.0 with 32 GB.
 
 ## License and credits
 

@@ -86,17 +86,41 @@ echo 1 > /sys/bus/pci/rescan                     || { log "rescan failed"; finis
 
 # The rescan write returns once enumeration is done, but the sysfs attributes of
 # the re-created device can lag slightly.  Wait up to 5 s rather than racing it.
-for _ in $(seq 1 50); do
-    [ -r "/sys/bus/pci/devices/$DEV/resource" ] && break
-    sleep 0.1
-done
-[ -r "/sys/bus/pci/devices/$DEV/resource" ] || log "$DEV did not reappear after rescan"
+wait_for_dev() {
+    for _ in $(seq 1 50); do
+        [ -r "/sys/bus/pci/devices/$DEV/resource" ] && return 0
+        sleep 0.1
+    done
+    return 1
+}
 
 # resource line 3 is BAR2; the values already carry a 0x prefix that bash
 # arithmetic understands, so do not prepend another one.
-if [ -r "/sys/bus/pci/devices/$DEV/resource" ]; then
-    read -r s e _ < <(sed -n 3p "/sys/bus/pci/devices/$DEV/resource")
-    log "BAR2 after rescan: $s-$e ($(( (e - s + 1) / 1048576 )) MiB)"
+bar2() { sed -n 3p "/sys/bus/pci/devices/$DEV/resource" 2>/dev/null; }
+
+wait_for_dev || { log "$DEV did not reappear after rescan"; finish; }
+
+read -r s e _ < <(bar2)
+log "BAR2 after rescan: $s-$e ($(( (e - s + 1) / 1048576 )) MiB)"
+
+# If the new size does not fit anywhere, the kernel leaves BAR2 unassigned
+# (0x0-0x0).  Loading the driver on an unassigned BAR is not merely useless: on
+# 6.14+ i915 dereferences a NULL pointer while unwinding the failed probe and
+# takes the machine down with it.  Put the old size back and re-enumerate, so
+# the card comes up exactly as it would have without this script.
+if [ "$s" = "0x0000000000000000" ] && [ "$e" = "0x0000000000000000" ]; then
+    log "BAR2 unassigned: size index $SIZE_IDX does not fit. rolling back to $curidx"
+    setpci -s "$DEV" COMMAND=0000 2>/dev/null
+    setpci -s "$DEV" "$REBAR_CTL.l=$cur" || log "could not restore ReBAR control"
+    echo 1 > "/sys/bus/pci/devices/$ROOTPORT/remove" 2>/dev/null
+    echo 1 > /sys/bus/pci/rescan 2>/dev/null
+    if wait_for_dev; then
+        read -r s e _ < <(bar2)
+        log "BAR2 after rollback: $s-$e ($(( (e - s + 1) / 1048576 )) MiB)"
+    else
+        log "$DEV did not reappear after rollback"
+    fi
+    log "try a smaller SIZE_IDX: the window must fit above the top of RAM"
 fi
 
 finish
