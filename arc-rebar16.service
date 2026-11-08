@@ -1,0 +1,12 @@
+[Unit]
+Description=Enable the large resizable BAR on an Intel Arc GPU, then load its driver
+Documentation=man:setpci(8)
+Before=display-manager.service graphical.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/arc-rebar16.sh
+
+[Install]
+WantedBy=multi-user.target
